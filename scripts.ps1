@@ -113,9 +113,19 @@ function Get-FilteredUsers {
         if ($disabled -eq $false) { $prefix = "!" }
         $filter = "$filter(${prefix}userAccountControl:1.2.840.113556.1.4.803:=2)"
     }
-    $filter
     if ($locked -ne $null) { $filter = "$filter(lockouttime>0)" }
     Get-FilteredItems -rootName $root -filter "($filter)" -attributes $attributes -returnEntry $returnEntry 
+}
+
+function Change-Record {
+    param( $record,
+           $dict
+          )
+    foreach($v in $dict){
+        $record.Put($v['field'], $v['value'])
+    }
+    $record.SetInfo()
+    $record.displayname
 }
 
 clear
@@ -134,3 +144,15 @@ Get-FilteredUsers -root $root -attributes @('name',
     'msDS-LastFailedInteractiveLogonTime',
     'msDS-LastSuccessfulInteractiveLogonTime',
     'lockouttime') -disabled false
+    
+Find-User -root $root -params @('name',
+    'whencreated',
+    'whenchanged',
+    'useraccountcontrol',
+    'msDS-LastFailedInteractiveLogonTime',
+    'msDS-LastSuccessfulInteractiveLogonTime',
+    'lockouttime') -returnEntry True | ? {
+        $_.Properties['name'] -eq 'user3 u. u'
+     } | % {
+        Change-Record -record $_ -dict @(@{'field' = 'displayname'; 'value'= 'AAAAAAA'})
+    } 
