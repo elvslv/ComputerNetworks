@@ -128,6 +128,54 @@ function Change-Record {
     $record.displayname
 }
 
+function Get-EventLogInfo{
+    param(
+        $computerName = $null,
+        $userName = $null,
+        $startDate = $null,
+        $endDate = $null,
+        $eventId = $null
+    )
+    $str = "Get-EventLog security"
+    if ($computerName -ne $null){
+        $str = "$str -ComputerName $computerName"
+    }
+    if ($userName -ne $null){
+        $str = "$str -UserName $userName"
+    }
+    if ($startDate -ne $null){
+        $str = "$str -after {0}" -f (get-date $startDate)
+    }
+    if ($endDate -ne $null){
+        $str = "$str -before {0}" -f (get-date $endDate)
+    }
+    $events = invoke-expression $str
+    if ($eventId){
+        $events = $events | ? {$_.eventid -eq $eventId }
+    }
+    $Data = New-Object System.Management.Automation.PSObject
+    $Data | Add-Member NoteProperty Time ($null)
+    $Data | Add-Member NoteProperty UserName ($null)
+    $Data | Add-Member NoteProperty ComputerName ($null)
+    $Data | Add-Member NoteProperty Address ($null)
+    $Data | Add-Member NoteProperty EventId ($null)
+    $Data | Add-Member NoteProperty Message ($null)
+    
+    $Events | %{
+
+        $Data.time = $_.TimeGenerated
+
+        $message = $_.message.split("`n") | %{$_.trimstart()} | %{$_.trimend()}
+
+        $Data.UserName = ($message | ?{$_ -like "Пользователь:*"} | %{$_ -replace "^.+:."} )
+        $Data.Address = ($message | ?{$_ -like "Адрес сети источника:*"} | %{$_ -replace "^.+:."})
+        $Data.EventId = $_.eventid
+        $Data.message = $message
+        $Data
+
+    }
+}
+
 clear
 
 Get-FilteredComputers -root $root -attributes @('name',
@@ -155,4 +203,7 @@ Find-User -root $root -params @('name',
         $_.Properties['name'] -eq 'user3 u. u'
      } | % {
         Change-Record -record $_ -dict @(@{'field' = 'displayname'; 'value'= 'AAAAAAA'})
+        $_.Owner
     } 
+    
+Get-EventLogInfo -eventId 4616 
