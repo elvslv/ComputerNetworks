@@ -81,6 +81,7 @@ function Get-FilteredUsers {
            $endDateModified = $null,#
            $disabled = $null,#
            $locked = $null,
+           $owner = $null,
 		   $returnEntry = $false
            )
     $filter = "&(objectCategory=person)(objectClass=user)"
@@ -150,7 +151,7 @@ function Get-EventLogInfo{
         $str = "$str -before {0}" -f (get-date $endDate)
     }
     $events = invoke-expression $str
-    if ($eventId){
+    if ($eventId -ne $null){
         $events = $events | ? {$_.eventid -eq $eventId }
     }
     $Data = New-Object System.Management.Automation.PSObject
@@ -161,16 +162,16 @@ function Get-EventLogInfo{
     $Data | Add-Member NoteProperty EventId ($null)
     $Data | Add-Member NoteProperty Message ($null)
     
-    $Events | %{
+    $events | %{
 
-        $Data.time = $_.TimeGenerated
+        $Data.Time = $_.TimeGenerated
 
         $message = $_.message.split("`n") | %{$_.trimstart()} | %{$_.trimend()}
 
         $Data.UserName = ($message | ?{$_ -like "Пользователь:*"} | %{$_ -replace "^.+:."} )
         $Data.Address = ($message | ?{$_ -like "Адрес сети источника:*"} | %{$_ -replace "^.+:."})
         $Data.EventId = $_.eventid
-        $Data.message = $message
+        $Data.Message = $message
         $Data
 
     }
@@ -182,7 +183,8 @@ Get-FilteredComputers -root $root -attributes @('name',
     'operatingsystem',
     'operatingsystemservicepack',
     'whencreated',
-    'useraccountcontrol') -startDate "4/15/2012 8:52:28 AM"
+    'useraccountcontrol',
+    'owner') -startDate "4/15/2012 8:52:28 AM"
    
 
 Get-FilteredUsers -root $root -attributes @('name',
@@ -191,9 +193,10 @@ Get-FilteredUsers -root $root -attributes @('name',
     'useraccountcontrol',
     'msDS-LastFailedInteractiveLogonTime',
     'msDS-LastSuccessfulInteractiveLogonTime',
-    'lockouttime') -disabled false
+    'lockouttime',
+    'owner') -disabled false
     
-Find-User -root $root -params @('name',
+Get-FilteredUsers -root $root -params @('name',
     'whencreated',
     'whenchanged',
     'useraccountcontrol',
@@ -203,7 +206,6 @@ Find-User -root $root -params @('name',
         $_.Properties['name'] -eq 'user3 u. u'
      } | % {
         Change-Record -record $_ -dict @(@{'field' = 'displayname'; 'value'= 'AAAAAAA'})
-        $_.Owner
     } 
     
 Get-EventLogInfo -eventId 4616 
