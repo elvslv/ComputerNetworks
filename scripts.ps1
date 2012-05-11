@@ -1,4 +1,5 @@
-$root = "LDAP://DC=mydomain,DC=local"
+п»ї$defaultRoot = "DC=dvfu,DC=ru"
+Import-Module activedirectory
 function Get-UniversalDateTime($dateString){
     $d = [datetime]$dateString
     $DateString = $d.ToString("u") -Replace "-|:|\s"
@@ -8,69 +9,178 @@ function Get-UniversalDateTime($dateString){
 
 function Create-FilteredItem{
     param($obj,
-         $params)
+         $attributes,
+         $owner = $null)
     $hash = @{}
-    foreach ($p in $params){
-        if ($obj[$p] -eq $null){
+    #$obj
+    foreach ($p in $attributes){
+        if ($obj.($p) -eq $null){
             $hash.($p) = '-'
         } else {
-            $hash.($p) = $obj[$p][0]
+            $hash.($p) = $obj.($p)
         }
+    }
+    if ($owner -ne $null){
+        $hash.('owner') = $obj.nTSecurityDescriptor.Owner
     }
     $r1 = New-Object PSObject -Property $hash
     return $r1
 }
 
-function Get-FilteredItems{
-    param ($rootName,
-           $attributes,
-           $filter = $null,
-		   $returnEntry = $false
-          )
-	$root = [ADSI]$rootName
-    $searcher = New-Object System.DirectoryServices.DirectorySearcher($root)
-    $searcher.Filter = $filter;
-	$attributes | % {
-        $searcher.PropertiesToLoad.Add($_) | out-null
-    }
-    $searcher.FindAll() | % {
-        if ($returnEntry){
-			$_.GetDirectoryEntry()
-		}
-		else {
-			Create-FilteredItem -obj $_.Properties -params $attributes
-		}
-    }
-    $searcher.Dispose()
-	$root.Dispose()
-}
-
 function Get-FilteredComputers{
-    param ($root,
-           $attributes,
+    param ($root = $defaultRoot,
+           $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'OperatingSystem', 'OperatingSystemServicePack', 'SID'),
            $startDate = $null,
            $endDate = $null,
            $disabled = $null,
-		   $returnEntry = $false
+           $owner = $null
           )
-    $filter = "&(objectCategory=Computer)(objectClass=Computer)"
+    $filter = ""
+    $attributes = @('operatingsystem', 'operatingsystemservicepack', 'nTSecurityDescriptor')
     if ($startDate -ne $null) { 
         $filter = "$filter(whencreated>={0})" -f (Get-UniversalDateTime $startDate)
+        $attributes = $attributes + 'whencreated'
+        $ftParams = $ftParams + 'whencreated'
     }
     if ($endDate -ne $null) { 
         $filter = "$filter(whencreated<={0})" -f (Get-UniversalDateTime $endDate)
+        $attributes = $attributes + 'whencreated'
+        if ($startDate -eq $null) {
+            $ftParams = $ftParams + 'whencreated'
+        }
     }
     if ($disabled -ne $null) {
         $prefix = "!"
         if ($disabled) { $prefix = "" }
         $filter = "$filter(${prefix}userAccountControl:1.2.840.113556.1.4.803:=2)"
+        $attributes = $attributes + 'userAccountControl'
     }
-    Get-FilteredItems -rootName $root -filter "($filter)" -attributes $attributes -returnEntry $returnEntry
+    Get-ADComputer -LDAPFilter $filter -SearchBase $root -Properties $attributes | ? {
+        ($owner -eq $null) -or ($_.nTSecurityDescriptor.Owner -eq $owner) 
+    } | % {
+        $_.('owner') = $_.nTSecurityDescriptor.Owner
+        $_
+    } | Format-LiSt -property $ftParams 
+     
 }
 
 function Get-FilteredUsers {
-    param ($root,
-           $attributes,
+    param ($root = $defaultRoot,
+		   $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'SID'),
+           $startDateFailedLogon = $null,#
+           $endDateFailedLogon = $null,#
+           $startDateCreated = $null,#
+           $endDateCreated = $null,#
+           $startDateLogon = $null,#
+           $endDateLogon = $null,#
+           $startDateModified = $null,#
+           $endDateModified = $null,#
+           $disabled = $null,#
+           $locked = $null,
+           $owner = $null
+           )
+    $filter = ""
+    $attributes = @('nTSecurityDescriptor')
+    if ($startDateFailedLogon -ne $null) { 
+        $filter = "$filter(msDS-LastFailedInteractiveLogonTime>={0})" -f (Get-UniversalDateTime $startDateFailedLogon)
+        $attributes = $attributes + 'msDS-LastFailedInteractiveLogonTime'
+		$ftParams = $ftParams + 'failedLogon'
+    }
+    if ($endDateFailedLogon -ne $null) { 
+        $filter = "$filter(msDS-LastFailedInteractiveLogonTime<={0})" -f (Get-UniversalDateTime $endDateFailedLogon)
+        $attributes = $attributes + 'msDS-LastFailedInteractiveLogonTime'
+		if ($startDateFailedLogon -eq $null){
+			$ftParams = $ftParams + 'failedLogon'
+		}
+    }
+    if ($startDateCreated -ne $null) { 
+        $filter = "$filter(whencreated>={0})" -f (Get-UniversalDateTime $startDateCreated)
+        $attributes = $attributes + 'whencreated'
+		$ftParams = $ftParams + 'whencreated'
+    }
+    if ($endDateCreated -ne $null) { 
+        $filter = "$filter(whencreated<={0})" -f (Get-UniversalDateTime $endDateCreated)
+        $attributes = $attributes + 'whencreated'
+		if ($startDateCreated -eq $null){
+			$ftParams = $ftParams + 'whencreated'
+		}
+    }
+    if ($startDateLogon -ne $null) { 
+        $filter = "$filter(msDS-LastSuccessfulInteractiveLogonTime>={0})" -f $startDateLogon 
+        $attributes = $attributes + 'msDS-LastSuccessfulInteractiveLogonTime'
+		$ftParams = $ftParams + 'logon'
+    }
+    if ($endDateLogon -ne $null) { 
+        $filter = "$filter(msDS-LastSuccessfulInteractiveLogonTime<={0})" -f $endDateLogon
+        $attributes = $attributes + 'msDS-LastSuccessfulInteractiveLogonTime'
+		if ($startDateLogon -eq $null){
+			$ftParams = $ftParams + 'logon'
+		}
+    }
+    if ($startDateModified -ne $null) { 
+        $filter = "$filter(whenchanged>={0})" -f (Get-UniversalDateTime $startDateModified)
+        $attributes = $attributes + 'whenchanged'
+		$ftParams = $ftParams + 'whenchanged'
+    }
+    if ($endDateModified -ne $null) { 
+        $filter = "$filter(whenchanged<={0})" -f (Get-UniversalDateTime $endDateModified)
+        $attributes = $attributes + 'whenchanged'
+		if ($startDateModified -eq $null){
+			$ftParams = $ftParams + 'whenchanged'
+		}
+    }
+    if ($disabled -ne $null) {
+        $prefix = ""
+        if ($disabled -eq $false) { $prefix = "!" }
+        $filter = "$filter(${prefix}userAccountControl:1.2.840.113556.1.4.803:=2)"
+        $attributes = $attributes + 'userAccountControl'
+    }
+    if ($locked -ne $null) { 
+        $filter = "$filter(lockouttime>0)" 
+        $attributes = $attributes + 'lockouttime'
+        $ftParams = $ftParams + 'locked'
+    }
+    $filter
+    
+    Get-ADUser -LDAPFilter $filter -SearchBase $root -Properties $attributes | ? {
+        ($owner -eq $null) -or ($_.nTSecurityDescriptor.Owner -eq $owner) 
+    } | % {
+		if (($startDateFailedLogon -ne $null) -or ($endDateFailedLogon -ne $null)){
+            $_.('failedLogon') = $_.('msDS-LastFailedInteractiveLogonTime')
+        }
+		if (($startDateLogon -ne $null) -or ($endDateLogon -ne $null)){
+            $_.('logon') = $_.('msDS-LastSuccessfulInteractiveLogonTime')
+        }
+		if ($locked -ne $null){
+            $_.('locked') = $locked
+        }
+        $_.('owner') = $_.nTSecurityDescriptor.Owner
+        $_
+    } | Format-LiSt -property $ftParams 
+    $ftParams 
+}
+
+function Change-Computer {
+    param ($root = $defaultRoot,
+           $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'OperatingSystem', 'OperatingSystemServicePack', 'SID'),
+           $startDate = $null,
+           $endDate = $null,
+           $disabled = $null,
+           $owner = $null,
+		   $dict
+          )
+	$computers = Get-FilteredComputers($root, $ftParams, $startDate, $endDate, $disabled, $owner)
+	for ($computer in $computers){
+		foreach($v in $dict){
+			$computer.($v['field']) = $v['value']
+		}
+		Set-ADComputer -instance $computer
+	}
+}
+
+function Change-User {
+    param ($root = $defaultRoot,
+		   $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'SID'),
            $startDateFailedLogon = $null,#
            $endDateFailedLogon = $null,#
            $startDateCreated = $null,#
@@ -82,40 +192,16 @@ function Get-FilteredUsers {
            $disabled = $null,#
            $locked = $null,
            $owner = $null,
-		   $returnEntry = $false
+		   $dict
            )
-    $filter = "&(objectCategory=person)(objectClass=user)"
-    if ($startDateFailedLogon -ne $null) { 
-        $filter = "$filter(msDS-LastFailedInteractiveLogonTime>={0}" -f (Get-UniversalDateTime $startDateFailedLogon)
-    }
-    if ($endDateFailedLogon -ne $null) { 
-        $filter = "$filter(msDS-LastFailedInteractiveLogonTime<={0})" -f (Get-UniversalDateTime $endDateFailedLogon)
-    }
-    if ($startDateCreated -ne $null) { 
-        $filter = "$filter(whencreated>={0})" -f (Get-UniversalDateTime $startDateCreated)
-    }
-    if ($endDateCreated -ne $null) { 
-        $filter = "$filter(whencreated<={0})" -f (Get-UniversalDateTime $endDateCreated)
-    }
-    if ($startDateLogon -ne $null) { 
-        $filter = "$filter(msDS-LastSuccessfulInteractiveLogonTime>={0})" -f (Get-UniversalDateTime $startDateLogon) 
-    }
-    if ($endDateLogon -ne $null) { 
-        $filter = "$filter(msDS-LastSuccessfulInteractiveLogonTime<={0})" -f (Get-UniversalDateTime $endDateLogon) 
-    }
-    if ($startDateModified -ne $null) { 
-        $filter = "$filter(whenchanged>={0})" -f (Get-UniversalDateTime $startDateModified)
-    }
-    if ($endDateModified -ne $null) { 
-        $filter = "$filter(whenchanged<={0})" -f (Get-UniversalDateTime $endDateModified)
-    }
-    if ($disabled -ne $null) {
-        $prefix = ""
-        if ($disabled -eq $false) { $prefix = "!" }
-        $filter = "$filter(${prefix}userAccountControl:1.2.840.113556.1.4.803:=2)"
-    }
-    if ($locked -ne $null) { $filter = "$filter(lockouttime>0)" }
-    Get-FilteredItems -rootName $root -filter "($filter)" -attributes $attributes -returnEntry $returnEntry 
+	$users = Get-FilteredUsers($root, $ftParams, $startDateFailedLogon, $endDateFailedLogon, $startDateCreated, 
+		$endDateCreated, $startDateLogon, $endDateLogon, $startDateModified, $endDateModified, $disabled, $locked, $owner)
+	for ($user in $users){
+		foreach($v in $dict){
+			$user.($v['field']) = $v['value']
+		}
+		Set-ADUser -instance $user
+	}
 }
 
 function Change-Record {
@@ -168,8 +254,8 @@ function Get-EventLogInfo{
 
         $message = $_.message.split("`n") | %{$_.trimstart()} | %{$_.trimend()}
 
-        $Data.UserName = ($message | ?{$_ -like "Пользователь:*"} | %{$_ -replace "^.+:."} )
-        $Data.Address = ($message | ?{$_ -like "Адрес сети источника:*"} | %{$_ -replace "^.+:."})
+        $Data.UserName = ($message | ?{$_ -like "РџРѕР»СЊР·РѕРІР°С‚РµР»СЊ:*"} | %{$_ -replace "^.+:."} )
+        $Data.Address = ($message | ?{$_ -like "РђРґСЂРµСЃ СЃРµС‚Рё РёСЃС‚РѕС‡РЅРёРєР°:*"} | %{$_ -replace "^.+:."})
         $Data.EventId = $_.eventid
         $Data.Message = $message
         $Data
@@ -179,33 +265,8 @@ function Get-EventLogInfo{
 
 clear
 
-Get-FilteredComputers -root $root -attributes @('name',
-    'operatingsystem',
-    'operatingsystemservicepack',
-    'whencreated',
-    'useraccountcontrol',
-    'owner') -startDate "4/15/2012 8:52:28 AM"
-   
+#Get-FilteredComputers -startDate "4/15/2012 8:52:28 AM" -endDate "4/17/2012 8:52:28 AM" -owner "DVFU\РђРґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂС‹ РґРѕРјРµРЅР°"
 
-Get-FilteredUsers -root $root -attributes @('name',
-    'whencreated',
-    'whenchanged',
-    'useraccountcontrol',
-    'msDS-LastFailedInteractiveLogonTime',
-    'msDS-LastSuccessfulInteractiveLogonTime',
-    'lockouttime',
-    'owner') -disabled false
+Get-FilteredUsers -startDateLogon "4/17/2005 8:52:28 AM"
     
-Get-FilteredUsers -root $root -params @('name',
-    'whencreated',
-    'whenchanged',
-    'useraccountcontrol',
-    'msDS-LastFailedInteractiveLogonTime',
-    'msDS-LastSuccessfulInteractiveLogonTime',
-    'lockouttime') -returnEntry True | ? {
-        $_.Properties['name'] -eq 'user3 u. u'
-     } | % {
-        Change-Record -record $_ -dict @(@{'field' = 'displayname'; 'value'= 'AAAAAAA'})
-    } 
-    
-Get-EventLogInfo -eventId 4616 
+#Get-EventLogInfo -eventId 4616 
