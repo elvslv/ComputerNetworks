@@ -7,26 +7,6 @@ function Get-UniversalDateTime($dateString){
     $DateString
 }
 
-function Create-FilteredItem{
-    param($obj,
-         $attributes,
-         $owner = $null)
-    $hash = @{}
-    #$obj
-    foreach ($p in $attributes){
-        if ($obj.($p) -eq $null){
-            $hash.($p) = '-'
-        } else {
-            $hash.($p) = $obj.($p)
-        }
-    }
-    if ($owner -ne $null){
-        $hash.('owner') = $obj.nTSecurityDescriptor.Owner
-    }
-    $r1 = New-Object PSObject -Property $hash
-    return $r1
-}
-
 function Get-FilteredComputers{
     param ($root = $defaultRoot,
            $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'OperatingSystem', 'OperatingSystemServicePack', 'SID'),
@@ -55,13 +35,15 @@ function Get-FilteredComputers{
         $filter = "$filter(${prefix}userAccountControl:1.2.840.113556.1.4.803:=2)"
         $attributes = $attributes + 'userAccountControl'
     }
+	if ($filter -eq ""){
+        $filter = "(objectClass=*)"
+    }
     Get-ADComputer -LDAPFilter $filter -SearchBase $root -Properties $attributes | ? {
         ($owner -eq $null) -or ($_.nTSecurityDescriptor.Owner -eq $owner) 
     } | % {
         $_.('owner') = $_.nTSecurityDescriptor.Owner
         $_
-    } | Format-LiSt -property $ftParams 
-     
+    } | Select-Object -property $ftParams 
 }
 
 function Get-FilteredUsers {
@@ -140,7 +122,9 @@ function Get-FilteredUsers {
         $attributes = $attributes + 'lockouttime'
         $ftParams = $ftParams + 'locked'
     }
-    $filter
+    if ($filter -eq ""){
+        $filter = "(objectClass=*)"
+    }
     
     Get-ADUser -LDAPFilter $filter -SearchBase $root -Properties $attributes | ? {
         ($owner -eq $null) -or ($_.nTSecurityDescriptor.Owner -eq $owner) 
@@ -156,31 +140,31 @@ function Get-FilteredUsers {
         }
         $_.('owner') = $_.nTSecurityDescriptor.Owner
         $_
-    } | Format-LiSt -property $ftParams 
-    $ftParams 
+    } | Select-Object -property $ftParams 
 }
 
 function Change-Computer {
     param ($root = $defaultRoot,
-           $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'OperatingSystem', 'OperatingSystemServicePack', 'SID'),
            $startDate = $null,
            $endDate = $null,
            $disabled = $null,
            $owner = $null,
 		   $dict
           )
-	$computers = Get-FilteredComputers($root, $ftParams, $startDate, $endDate, $disabled, $owner)
-	for ($computer in $computers){
+	Get-FilteredComputers -root $root -startDate $startDate -endDate $endDate -disabled $disabled -owner $owner| % {
 		foreach($v in $dict){
-			$computer.($v['field']) = $v['value']
+            if ($v['field'] -eq $null){
+                break;
+            }
+			$_.($v['field']) = $v['value']
 		}
-		Set-ADComputer -instance $computer
+		Set-ADComputer -Identity $_.DistinguishedName
+        $_
 	}
 }
 
 function Change-User {
     param ($root = $defaultRoot,
-		   $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'SID'),
            $startDateFailedLogon = $null,#
            $endDateFailedLogon = $null,#
            $startDateCreated = $null,#
@@ -194,25 +178,16 @@ function Change-User {
            $owner = $null,
 		   $dict
            )
-	$users = Get-FilteredUsers($root, $ftParams, $startDateFailedLogon, $endDateFailedLogon, $startDateCreated, 
-		$endDateCreated, $startDateLogon, $endDateLogon, $startDateModified, $endDateModified, $disabled, $locked, $owner)
-	for ($user in $users){
+	Get-FilteredUsers -root $root -startDateFailedLogon $startDateFailedLogon -endDateFailedLogon $endDateFailedLogon -startDateCreated $startDateCreated -endDateCreated $endDateCreated -startDateLogon $startDateLogon -endDateLogon $endDateLogon -startDateModified $startDateModified -endDateModified $sendDateModified -disabled $disabled -locked $locked -owner $owner | % {
 		foreach($v in $dict){
-			$user.($v['field']) = $v['value']
+            if ($v['field'] -eq $null){
+                break;
+            }
+			$_.($v['field']) = $v['value']
 		}
-		Set-ADUser -instance $user
+		Set-ADUser -Identity $_.DistinguishedName
+        $_
 	}
-}
-
-function Change-Record {
-    param( $record,
-           $dict
-          )
-    foreach($v in $dict){
-        $record.Put($v['field'], $v['value'])
-    }
-    $record.SetInfo()
-    $record.displayname
 }
 
 function Get-EventLogInfo{
@@ -265,8 +240,8 @@ function Get-EventLogInfo{
 
 clear
 
-#Get-FilteredComputers -startDate "4/15/2012 8:52:28 AM" -endDate "4/17/2012 8:52:28 AM" -owner "DVFU\Администраторы домена"
+Change-User -dict @{}
 
-Get-FilteredUsers -startDateLogon "4/17/2005 8:52:28 AM"
+#Get-FilteredUsers -startDateCreated "4/17/2012 8:52:28 AM"
     
 #Get-EventLogInfo -eventId 4616 
