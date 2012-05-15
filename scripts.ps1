@@ -1,5 +1,15 @@
-﻿$defaultRoot = "DC=dvfu,DC=ru"
 Import-Module activedirectory
+
+$defaultRoot = "DC=dvfu,DC=ru"
+
+#different event ids  for event-log, see http://www.windowsecurity.com/articles/event-ids-windows-server-2008-vista-revealed.html
+Set-Variable EVENT_ACCOUNT_LOGGED_OFF -value 4634 
+Set-Variable EVENT_SUCCESSFULLY_LOGON -value 4624 
+Set-Variable EVENT_FAILED_LOGON -value 4625
+Set-Variable EVENT_WORKSTATION_LOCKED -value 4800 
+Set-Variable EVENT_WORKSTATION_UNLOCKED -value 4801
+Set-Variable EVENT_SYSTEM_AUDIT_POLICY_CHANGED -value 4719  
+
 function Get-UniversalDateTime($dateString){
     $d = [datetime]$dateString
     $DateString = $d.ToString("u") -Replace "-|:|\s"
@@ -140,7 +150,7 @@ function Get-FilteredUsers {
         }
         $_.('owner') = $_.nTSecurityDescriptor.Owner
         $_
-    } | Select-Object -property $ftParams 
+    } | Select-Object -property $ftParams
 }
 
 function Change-Computer {
@@ -240,8 +250,8 @@ function Get-EventLogInfo{
 
 clear
 
-Change-User -dict @{}
+Get-FilteredUsers -disabled true -owner "DVFU\IDM" | format-list
 
 #Get-FilteredUsers -startDateCreated "4/17/2012 8:52:28 AM"
     
-#Get-EventLogInfo -eventId 4616 
+#Get-EventLogInfo -eventId $EVENT_SUCCESSFULLY_LOGON 
