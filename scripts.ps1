@@ -19,13 +19,17 @@ function Get-UniversalDateTime($dateString){
 
 function Get-FilteredComputers{
     param ($root = $defaultRoot,
-           $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'OperatingSystem', 'OperatingSystemServicePack', 'SID'),
+           $properties = @(),          
            $startDate = $null,
            $endDate = $null,
            $disabled = $null,
-           $owner = $null
+           $owner = $null,
+           $distinguishedName = $null,
+           $cn = $null
           )
     $filter = ""
+    $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'OperatingSystem', 'OperatingSystemServicePack', 'SID')
+    $ftParams = $ftParams + $properties
     $attributes = @('operatingsystem', 'operatingsystemservicepack', 'nTSecurityDescriptor')
     if ($startDate -ne $null) { 
         $filter = "$filter(whencreated>={0})" -f (Get-UniversalDateTime $startDate)
@@ -45,9 +49,16 @@ function Get-FilteredComputers{
         $filter = "$filter(${prefix}userAccountControl:1.2.840.113556.1.4.803:=2)"
         $attributes = $attributes + 'userAccountControl'
     }
+    if ($distinguishedName -ne $null){
+        $filter = "$filter(DistinguishedName=$distinguishedName)" 
+    }
+    if ($cn -ne $null){
+        $filter = "$filter(CN=$cn)" 
+    }
 	if ($filter -eq ""){
         $filter = "(objectClass=*)"
     }
+    $attributes = $attributes + $properties
     Get-ADComputer -LDAPFilter $filter -SearchBase $root -Properties $attributes | ? {
         ($owner -eq $null) -or ($_.nTSecurityDescriptor.Owner -eq $owner) 
     } | % {
@@ -58,7 +69,7 @@ function Get-FilteredComputers{
 
 function Get-FilteredUsers {
     param ($root = $defaultRoot,
-		   $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'SID'),
+		   $properties = @(),
            $startDateFailedLogon = $null,#
            $endDateFailedLogon = $null,#
            $startDateCreated = $null,#
@@ -69,18 +80,23 @@ function Get-FilteredUsers {
            $endDateModified = $null,#
            $disabled = $null,#
            $locked = $null,
-           $owner = $null
+           $owner = $null,
+           $distinguishedName = $null,
+           $cn = $null,
+           $login = $null
            )
     $filter = ""
+    $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'SID') 
+    $ftParams = $ftParams  + $properties
     $attributes = @('nTSecurityDescriptor')
     if ($startDateFailedLogon -ne $null) { 
-        $filter = "$filter(msDS-LastFailedInteractiveLogonTime>={0})" -f (Get-UniversalDateTime $startDateFailedLogon)
-        $attributes = $attributes + 'msDS-LastFailedInteractiveLogonTime'
+        $filter = "$filter(badPasswordTime>={0})" -f (Get-UniversalDateTime $startDateFailedLogon)
+        $attributes = $attributes + 'badPasswordTime'
 		$ftParams = $ftParams + 'failedLogon'
     }
     if ($endDateFailedLogon -ne $null) { 
-        $filter = "$filter(msDS-LastFailedInteractiveLogonTime<={0})" -f (Get-UniversalDateTime $endDateFailedLogon)
-        $attributes = $attributes + 'msDS-LastFailedInteractiveLogonTime'
+        $filter = "$filter(badPasswordTime<={0})" -f (Get-UniversalDateTime $endDateFailedLogon)
+        $attributes = $attributes + 'badPasswordTime'
 		if ($startDateFailedLogon -eq $null){
 			$ftParams = $ftParams + 'failedLogon'
 		}
@@ -98,13 +114,13 @@ function Get-FilteredUsers {
 		}
     }
     if ($startDateLogon -ne $null) { 
-        $filter = "$filter(msDS-LastSuccessfulInteractiveLogonTime>={0})" -f $startDateLogon 
-        $attributes = $attributes + 'msDS-LastSuccessfulInteractiveLogonTime'
+        $filter = "$filter(lastLogon>={0})" -f $startDateLogon 
+        $attributes = $attributes + 'lastLogon'
 		$ftParams = $ftParams + 'logon'
     }
     if ($endDateLogon -ne $null) { 
-        $filter = "$filter(msDS-LastSuccessfulInteractiveLogonTime<={0})" -f $endDateLogon
-        $attributes = $attributes + 'msDS-LastSuccessfulInteractiveLogonTime'
+        $filter = "$filter(lastLogon<={0})" -f $endDateLogon
+        $attributes = $attributes + 'lastLogon'
 		if ($startDateLogon -eq $null){
 			$ftParams = $ftParams + 'logon'
 		}
@@ -132,18 +148,27 @@ function Get-FilteredUsers {
         $attributes = $attributes + 'lockouttime'
         $ftParams = $ftParams + 'locked'
     }
+    if ($distinguishedName -ne $null){
+        $filter = "$filter(DistinguishedName=$distinguishedName)" 
+    }
+    if ($login -ne $null){
+        $filter = "$filter(sAMAccountName=$login)"
+    }
+    if ($cn -ne $null){
+        $filter = "$filter(CN=$cn)" 
+    }
     if ($filter -eq ""){
         $filter = "(objectClass=*)"
     }
-    
+    $attributes = $attributes + $properties
     Get-ADUser -LDAPFilter $filter -SearchBase $root -Properties $attributes | ? {
         ($owner -eq $null) -or ($_.nTSecurityDescriptor.Owner -eq $owner) 
     } | % {
 		if (($startDateFailedLogon -ne $null) -or ($endDateFailedLogon -ne $null)){
-            $_.('failedLogon') = $_.('msDS-LastFailedInteractiveLogonTime')
+            $_.('failedLogon') = $_.('badPasswordTime')
         }
 		if (($startDateLogon -ne $null) -or ($endDateLogon -ne $null)){
-            $_.('logon') = $_.('msDS-LastSuccessfulInteractiveLogonTime')
+            $_.('logon') = $_.('lastLogon')
         }
 		if ($locked -ne $null){
             $_.('locked') = $locked
@@ -153,27 +178,56 @@ function Get-FilteredUsers {
     } | Select-Object -property $ftParams
 }
 
-function Change-Computer {
+function Change-Computer{
+    param ($obj = $null,
+          $dict)
+    if ($obj -eq $null){
+        return
+    }
+    $entry = Get-ADComputer -Identity $obj.DistinguishedName
+    foreach($v in $dict){
+        if ($v['field'] -eq $null){
+            break;
+        }
+			$entry.($v['field']) = $v['value']
+		}
+		Set-AdComputer -instance $entry  
+    $entry
+}
+
+function Change-Computers {
     param ($root = $defaultRoot,
            $startDate = $null,
            $endDate = $null,
            $disabled = $null,
            $owner = $null,
+           $distinguishedName = $null,
+           $cn = $null,
 		   $dict
           )
-	Get-FilteredComputers -root $root -startDate $startDate -endDate $endDate -disabled $disabled -owner $owner| % {
-		foreach($v in $dict){
-            if ($v['field'] -eq $null){
-                break;
-            }
-			$_.($v['field']) = $v['value']
-		}
-		Set-ADComputer -Identity $_.DistinguishedName
-        $_
+	Get-FilteredComputers -root $root -cn $cn -startDate $startDate -endDate $endDate -disabled $disabled -owner $owner -distinguishedName $distinguishedName| % {
+		Change-Computer -obj $_ -dict $dict
 	}
 }
 
-function Change-User {
+function Change-User{
+    param ($obj = $null,
+          $dict)
+    if ($obj -eq $null){
+        return
+    }
+    $entry = Get-ADUser -Identity $obj.DistinguishedName
+    foreach($v in $dict){
+        if ($v['field'] -eq $null){
+            break;
+        }
+			$entry.($v['field']) = $v['value']
+		}
+		Set-AdUser -instance $entry  
+    $entry
+}
+
+function Change-Users {
     param ($root = $defaultRoot,
            $startDateFailedLogon = $null,#
            $endDateFailedLogon = $null,#
@@ -186,17 +240,13 @@ function Change-User {
            $disabled = $null,#
            $locked = $null,
            $owner = $null,
+           $distinguishedName = $null,
+           $cn = $null,
+           $login = $null,
 		   $dict
            )
-	Get-FilteredUsers -root $root -startDateFailedLogon $startDateFailedLogon -endDateFailedLogon $endDateFailedLogon -startDateCreated $startDateCreated -endDateCreated $endDateCreated -startDateLogon $startDateLogon -endDateLogon $endDateLogon -startDateModified $startDateModified -endDateModified $sendDateModified -disabled $disabled -locked $locked -owner $owner | % {
-		foreach($v in $dict){
-            if ($v['field'] -eq $null){
-                break;
-            }
-			$_.($v['field']) = $v['value']
-		}
-		Set-ADUser -Identity $_.DistinguishedName
-        $_
+	Get-FilteredUsers -root $root -login $login -cn $cn -distinguishedName $distinguishedName -startDateFailedLogon $startDateFailedLogon -endDateFailedLogon $endDateFailedLogon -startDateCreated $startDateCreated -endDateCreated $endDateCreated -startDateLogon $startDateLogon -endDateLogon $endDateLogon -startDateModified $startDateModified -endDateModified $sendDateModified -disabled $disabled -locked $locked -owner $owner | % {
+		Change-User -obj $_ -dict $dict
 	}
 }
 
@@ -206,7 +256,8 @@ function Get-EventLogInfo{
         $userName = $null,
         $startDate = $null,
         $endDate = $null,
-        $eventId = $null
+        $eventId = $null,
+        $workstation = $null
     )
     $str = "Get-EventLog security"
     if ($computerName -ne $null){
@@ -229,29 +280,42 @@ function Get-EventLogInfo{
     $Data | Add-Member NoteProperty Time ($null)
     $Data | Add-Member NoteProperty UserName ($null)
     $Data | Add-Member NoteProperty ComputerName ($null)
+    $Data | Add-Member NoteProperty Workstation ($null)
     $Data | Add-Member NoteProperty Address ($null)
+    $Data | Add-Member NoteProperty ErrorCode ($null)
     $Data | Add-Member NoteProperty EventId ($null)
-    $Data | Add-Member NoteProperty Message ($null)
-    
+    #$Data | Add-Member NoteProperty Message ($null)
+        
     $events | %{
 
         $Data.Time = $_.TimeGenerated
 
         $message = $_.message.split("`n") | %{$_.trimstart()} | %{$_.trimend()}
 
-        $Data.UserName = ($message | ?{$_ -like "Пользователь:*"} | %{$_ -replace "^.+:."} )
-        $Data.Address = ($message | ?{$_ -like "Адрес сети источника:*"} | %{$_ -replace "^.+:."})
+        $Data.UserName = ($message | ? {[regex]::matches($_ , "(Имя учетной записи|Учетная запись входа):*")} | %{$_ -replace "^.+:."} )
+        $Data.Address = ($message | ? {$_ -like "Адрес сети источника:*"} | %{$_ -replace "^.+:."})
+        $Data.Workstation = ($message | ?{$_ -like "*станци?:*"} | %{$_ -replace "^.+:."})
+        $Data.ErrorCode = ($message | ?{$_ -like "Код ошибки:*"} | %{$_ -replace "^.+:."})
         $Data.EventId = $_.eventid
-        $Data.Message = $message
+        #$Data.Message = $_.message
         $Data
-
-    }
+    } | ? { ($workstation -eq $null) -or ($Data.Workstation -like $workstation)}
 }
 
 clear
 
-Get-FilteredUsers -disabled true -owner "DVFU\IDM" | format-list
+#Get-FilteredUsers -cn "test" -properties @("Name")| format-list
+
+#Change-Users -cn "test" -dict @(@{'field' = 'info'; 'value' = 'tratata1234'})
+
+#Get-FilteredUsers -disabled false -owner "DVFU\Администраторы домена" | ? {
+#    $_.DistinguishedName -eq 'CN=test,OU=TemporaryUsers,DC=dvfu,DC=ru'
+#} | % {
+#    Change-User -obj $_ -dict @(@{'field' = 'info'; 'value' = 'tratata11'})
+#} 
 
 #Get-FilteredUsers -startDateCreated "4/17/2012 8:52:28 AM"
     
-#Get-EventLogInfo -eventId $EVENT_SUCCESSFULLY_LOGON 
+#Get-EventLogInfo -eventid 4624 -workstation  "*WIN*"
+
+Get-FilteredUsers -cn "terent" | format-list
