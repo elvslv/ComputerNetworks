@@ -10,11 +10,36 @@ Set-Variable EVENT_WORKSTATION_LOCKED -value 4800
 Set-Variable EVENT_WORKSTATION_UNLOCKED -value 4801
 Set-Variable EVENT_SYSTEM_AUDIT_POLICY_CHANGED -value 4719  
 
-function Get-UniversalDateTime($dateString){
+function Get-UniversalDateTime ($dateString){
     $d = [datetime]$dateString
     $DateString = $d.ToString("u") -Replace "-|:|\s"
     $DateString = $DateString -Replace "Z", ".0Z"
     $DateString
+}
+
+function Call-FunctionWithParams ($funcName, $params){
+    $expr = $funcName
+    foreach($k in $params.keys){
+        if ($k -eq "dict"){
+            continue
+        }
+        $expr = "$expr -$k {0}" -f $params[$k]
+    }
+    return invoke-expression $expr
+}
+
+function Change-Dates([timespan]$timedelta, [datetime]$startDate, [datetime]$endDate){
+    if (($startDate -eq $null) -and  ($endDate -eq $null)){
+        $endDate = get-date
+        $startDate = $endDate - $timedelta
+    }
+    elseif (($startDate -ne $null) -and (($endDate -eq $null))){
+        $endDate = $startDate + $timedelta
+    }
+    elseif (($startDate -eq $null) -and (($endDate -ne $null))){
+        $startDate = $endDate - $timedelta
+    }
+	return $startDate, $endDate
 }
 
 <#
@@ -22,6 +47,8 @@ function Get-UniversalDateTime($dateString){
 	.
 .DESCRIPTION
 	Выводит список компьютеров, удовлетворяющих фильтру, со значениями их параметров.
+    timedelta --параметр в формате [-]{ d | [d.]hh:mm[:ss[.ff]] }
+    d -- дни, hh-часы, mm -- минуты, ss -- секунды, ff -- доли секунды
 .EXAMPLE
 	Get-FilteredComputers -sd "4/17/2012 8:52:28 AM"
     Получает список всех компьютеров, созданных не ранее "4/17/2012 8:52:28 AM"
@@ -34,6 +61,9 @@ function Get-UniversalDateTime($dateString){
 .EXAMPLE 
     Get-FilteredComputers -cn "*V1059*"
     Компьютер, имя которого содержит "V1059"
+.EXAMPLE 
+    Get-FilteredComputers -sd "4/17/2012 8:52:28 AM" -td "2.05:00"
+    Возвращает компьютеры, созданные в течение двух дней 5 часов после 4/17/2012 8:52:28 AM
 .NOTES
 	.
 #>
@@ -56,6 +86,10 @@ function Get-FilteredComputers{
         [Alias("ed")]
         [datetime]   
         $endDate,
+        [Parameter(HelpMessage="Разница между начальной (конечной) датой, если одна из них задана, или между текущей датой и начальной, если начальная и конечная даты не заданы, игнорируется, если одновременно заданы startDate и endDate")]
+        [Alias("td")]
+        [timespan]   
+        $timedelta,
         [Parameter(HelpMessage="Флаг, если он задан, ищем объекты, которые являются\не являются отключенными в зависимости от его значения")]
         [Alias("dis")]
         $disabled = $null,
@@ -78,6 +112,9 @@ function Get-FilteredComputers{
     $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'OperatingSystem', 'OperatingSystemServicePack', 'SID')
     $ftParams = $ftParams + $properties
     $attributes = @('operatingsystem', 'operatingsystemservicepack', 'nTSecurityDescriptor')
+	if ($timedelta -ne $null){
+        $startDate, $endDate = Change-Dates $timedelta $startDate $endDate
+    }
     if ($startDate -ne $null) { 
         $filter = "$filter(whencreated>={0})" -f (Get-UniversalDateTime $startDate)
         $attributes = $attributes + 'whencreated'
@@ -108,6 +145,7 @@ function Get-FilteredComputers{
 	if ($filter -eq ""){
         $filter = "(objectClass=*)"
     }
+    Write-Host $filter
     $attributes = $attributes + $properties
     $allFields = (($cn -ne "") -and ($cn.IndexOf('*') -eq -1) -and ($cn.IndexOf('?') -eq -1)) -or (($distinguishedName -ne "") -and ($distinguishedName.IndexOf('*') -eq -1) -and ($distinguishedName.IndexOf('?') -eq -1))
     if ($allFields) {
@@ -138,6 +176,8 @@ function Get-FilteredComputers{
 	.
 .DESCRIPTION
 	Выводит список пользователей, удовлетворяющих фильтру, со значениями их параметров.
+    timedelta* --параметры в формате [-]{ d | [d.]hh:mm[:ss[.ff]] }
+    d -- дни, hh-часы, mm -- минуты, ss -- секунды, ff -- доли секунды
 .EXAMPLE
 	Get-FilteredUsers -sdfl "4/17/2012 8:52:28 AM" -edfl "5/17/2012 8:52:28 AM"
     Возвращает список пользователей, которыми была осуществлена неудачная попытка входа в промежутке между "4/17/2012 8:52:28 AM" и "5/17/2012 8:52:28 AM"
@@ -189,6 +229,10 @@ function Get-FilteredUsers {
         [Alias("edfl")]
         [datetime]   
         $endDateFailedLogon,
+		[Parameter(HelpMessage="Разница между начальной (конечной) датой неуспешного входа, если одна из них задана, или между текущей датой и начальной, если начальная и конечная даты не заданы, игнорируется, если одновременно заданы startDate и endDate")]
+        [Alias("tdfl")]
+        [timespan]   
+        $timedeltaFailedLogon,
 		[Parameter(HelpMessage="Дата, после которой созданы искомые объекты")]
         [Alias("sdc")]
         [datetime]   
@@ -197,6 +241,10 @@ function Get-FilteredUsers {
         [Alias("edc")]
         [datetime]  
         $endDateCreated,
+		[Parameter(HelpMessage="Разница между начальной (конечной) датой создания")]
+        [Alias("tdс")]
+        [timespan]   
+        $timedeltaCreated,
 		[Parameter(HelpMessage="Дата, после которой был осуществлен вход")]
         [Alias("sdl")]
         [datetime]   
@@ -204,7 +252,11 @@ function Get-FilteredUsers {
 		[Parameter(HelpMessage="Дата, до которой был осуществлен вход")]
         [Alias("edl")]
         [datetime]   
-        $endDateLogonl,
+        $endDateLogon,
+		[Parameter(HelpMessage="Разница между начальной (конечной) датой успешного входа")]
+        [Alias("tdl")]
+        [timespan]   
+        $timedeltaLogon,
 		[Parameter(HelpMessage="Дата, после которой был изменен объект")]
         [Alias("sdm")]
         [datetime]  
@@ -213,6 +265,10 @@ function Get-FilteredUsers {
         [Alias("edm")]
         [datetime]  
         $endDateModified,
+		[Parameter(HelpMessage="Разница между начальной (конечной) датой успешного изменения объекта")]
+        [Alias("tdm")]
+        [timespan]   
+        $timedeltaModified,
 		[Parameter(HelpMessage="Флаг, если он задан, ищем объекты, которые являются\не являются заблокированными")]
         [Alias("lo")]
         $locked = $null,
@@ -228,6 +284,10 @@ function Get-FilteredUsers {
     $ftParams = @('DistinguishedName', 'Enabled', 'Owner', 'SID') 
     $ftParams = $ftParams  + $properties
     $attributes = @('nTSecurityDescriptor')
+
+    if ($timedeltaFailedLogon -ne $null){
+	   $startDateFailedLogon, $endDateFailedLogon = Change-Dates $timedeltaFailedLogon $startDateFailedLogon $endDateFailedLogon
+    }
     if ($startDateFailedLogon -ne $null) { 
         $filter = "$filter(badPasswordTime>={0})" -f ($startDateFailedLogon.ToFileTime())
         $attributes = $attributes + 'badPasswordTime'
@@ -239,6 +299,9 @@ function Get-FilteredUsers {
 		if ($startDateFailedLogon -eq $null){
 			$ftParams = $ftParams + 'badPasswordTime'
 		}
+    }
+    if ($timedeltaCreated -ne $null){
+	   $startDateCreated, $endDateCreated = Change-Dates $timedeltaCreated $startDateCreated $endDateCreated
     }
     if ($startDateCreated -ne $null) { 
         $filter = "$filter(whencreated>={0})" -f (Get-UniversalDateTime $startDateCreated)
@@ -252,6 +315,10 @@ function Get-FilteredUsers {
 			$ftParams = $ftParams + 'whencreated'
 		}
     }
+    
+	if ($timedeltaLogon -ne $null){
+	   $startDateLogon, $endDateLogon = Change-Dates $timedeltaLogon $startDateLogon $endDateLogon
+    }
     if ($startDateLogon -ne $null) { 
         $filter = "$filter(lastLogonTimestamp>={0})" -f $($startDateLogon.ToFileTime())
         $attributes = $attributes + 'lastLogonTimestamp'
@@ -263,6 +330,10 @@ function Get-FilteredUsers {
 		if ($startDateLogon -eq $null){
 			$ftParams = $ftParams + 'lastLogonTimestamp'
 		}
+    }
+    
+	if ($timedeltaModified -ne $null){	
+	   $startDateModified, $endDateLogon = Change-Dates $timedeltaModified $startDateModified $endDateModified
     }
     if ($startDateModified -ne $null) { 
         $filter = "$filter(whenchanged>={0})" -f (Get-UniversalDateTime $startDateModified)
@@ -370,11 +441,7 @@ function Change-Computer{
 .SYNOPSIS
 	.
 .DESCRIPTION
-	Изменяет параметры компьютеров удовлетворяющих фильтру согласно хэшу dict.
-.EXAMPLE
-	.
-.NOTES
-	.
+	Изменяет параметры компьютеров удовлетворяющих фильтру (см. функцию Get-FilteredComputers) согласно хэшу dict.
 #>
 function Change-Computers {
     param (
@@ -382,7 +449,7 @@ function Change-Computers {
         [ValidateNotNullOrEmpty()]
         [Alias("r")]
         [string]
-        $root = $defaultRoot,    
+        $root = $defaultRoot,     
         [Parameter(HelpMessage="Дата, после которой созданы искомые объекты")]
         [Alias("sd")]
         [datetime]   
@@ -391,6 +458,10 @@ function Change-Computers {
         [Alias("ed")]
         [datetime]   
         $endDate,
+        [Parameter(HelpMessage="Разница между начальной (конечной) датой, если одна из них задана, или между текущей датой и начальной, если начальная и конечная даты не заданы, игнорируется, если одновременно заданы startDate и endDate")]
+        [Alias("td")]
+        [timespan]   
+        $timedelta,
         [Parameter(HelpMessage="Флаг, если он задан, ищем объекты, которые являются\не являются отключенными в зависимости от его значения")]
         [Alias("dis")]
         $disabled = $null,
@@ -405,11 +476,14 @@ function Change-Computers {
         [Parameter(HelpMessage="CN объекта")]
         [string]   
         $cn,
+        [Parameter(HelpMessage="OU объекта")]
+        [string]   
+        $ou,
 		[Parameter(HelpMessage="Хэш, ключи которого имена параметров пользователя, а значения -- их новые значения")]
 		$dict
 	)
-	Get-FilteredComputers -r $root -cn $cn -sd $startDate -ed $endDate -dis $disabled -o $owner -dn $distinguishedName| % {
-		Change-Computer -obj $_ -dict $dict
+    Call-FunctionWithParams "Get-FilteredComputers",  $PSBoundParameters | % {
+		Change-Computer -c $_ -dict $dict
 	}
 }
 
@@ -446,17 +520,18 @@ function Change-User{
 .DESCRIPTION
 	Изменяет параметры пользователей удовлетворяющих фильтру согласно хэшу dict.
 .EXAMPLE
-	.
+	Change-Users -cn "test" -dict @{'info' = 'tratata12345'}
+    Изменяет поле info у пользователя с именем test
 .NOTES
 	.
 #>
 function Change-Users {
     param (
-        [Parameter(HelpMessage="Путь в AD, в котором необходимо производить поиск, например 'DC=dvfu,DC=ru'")]
+		[Parameter(HelpMessage="Путь в AD, в котором необходимо производить поиск, например 'DC=dvfu,DC=ru'")]
         [ValidateNotNullOrEmpty()]
         [Alias("r")]
         [string]
-        $root = $defaultRoot,      
+        $root = $defaultRoot,   
         [Parameter(HelpMessage="Флаг, если он задан, ищем объекты, которые являются\не являются отключенными в зависимости от его значения")]
         [Alias("dis")]
         $disabled = $null,
@@ -474,35 +549,51 @@ function Change-Users {
         [Parameter(HelpMessage="Дата, после которой была неуспешная попытка входа")]
         [Alias("sdfl")]
         [datetime]   
-        $startDateFailedLogon = $null,
+        $startDateFailedLogon,
         [Parameter(HelpMessage="Дата, до которой была неуспешная попытка входа")]
         [Alias("edfl")]
         [datetime]   
-        $endDateFailedLogon = $null,
+        $endDateFailedLogon,
+		[Parameter(HelpMessage="Разница между начальной (конечной) датой неуспешного входа, если одна из них задана, или между текущей датой и начальной, если начальная и конечная даты не заданы, игнорируется, если одновременно заданы startDate и endDate")]
+        [Alias("tdfl")]
+        [timespan]   
+        $timedeltaFailedLogon,
 		[Parameter(HelpMessage="Дата, после которой созданы искомые объекты")]
         [Alias("sdc")]
         [datetime]   
-        $startDateCreated = $null,
+        $startDateCreated,
 		[Parameter(HelpMessage="Дата, до которой созданы искомые объекты")]
         [Alias("edc")]
         [datetime]  
-        $endDateCreated = $null,
+        $endDateCreated,
+		[Parameter(HelpMessage="Разница между начальной (конечной) датой создания")]
+        [Alias("tdс")]
+        [timespan]   
+        $timedeltaCreated,
 		[Parameter(HelpMessage="Дата, после которой был осуществлен вход")]
         [Alias("sdl")]
         [datetime]   
-        $startDateLogon = $null,
+        $startDateLogon,
 		[Parameter(HelpMessage="Дата, до которой был осуществлен вход")]
         [Alias("edl")]
         [datetime]   
-        $endDateLogon = $null,
+        $endDateLogon,
+		[Parameter(HelpMessage="Разница между начальной (конечной) датой успешного входа")]
+        [Alias("tdl")]
+        [timespan]   
+        $timedeltaLogon,
 		[Parameter(HelpMessage="Дата, после которой был изменен объект")]
         [Alias("sdm")]
         [datetime]  
-        $startDateModified = $null,
+        $startDateModified,
 		[Parameter(HelpMessage="Дата, до которой был изменен объект")]
         [Alias("edm")]
         [datetime]  
-        $endDateModified = $null,
+        $endDateModified,
+		[Parameter(HelpMessage="Разница между начальной (конечной) датой успешного изменения объекта")]
+        [Alias("tdm")]
+        [timespan]   
+        $timedeltaModified,
 		[Parameter(HelpMessage="Флаг, если он задан, ищем объекты, которые являются\не являются заблокированными")]
         [Alias("lo")]
         $locked = $null,
@@ -510,11 +601,14 @@ function Change-Users {
         [Alias("l")]
         [string]  
         $login,
+        [Parameter(HelpMessage="OU объекта")]
+        [string]   
+        $ou,
 		[Parameter(HelpMessage="Хэш, ключи которого имена параметров пользователя, а значения -- их новые значения")]
 		$dict
 	)
-	Get-FilteredUsers -r $root -l $login -cn $cn -dn $distinguishedName -sdfl $startDateFailedLogon -edfl $endDateFailedLogon -sdc $startDateCreated -edc $endDateCreated -sdl $startDateLogon -edl $endDateLogon -sdm $startDateModified -edm $sendDateModified -dis $disabled -lo $locked -o $owner | % {
-		Change-User -obj $_ -dict $dict
+    Call-FunctionWithParams "Get-FilteredUsers" $PSBoundParameters | % {
+		Change-User -u $_ -dict $dict
 	}
 }
 
@@ -524,7 +618,11 @@ function Change-Users {
 .DESCRIPTION
 	Выводит сведения о событиях журнала Security.
 .EXAMPLE
-	.
+	Get-EventLogInfo -id 4624 -ws  "*WIN*"
+    Возвращает события успешного входа на рабочих станциях, содержащих в названии "WIN"
+.EXAMPLE
+    Get-EventLogInfo -id 4776 -after "5/15/2012" -before "5/17/2012"
+    Возвращает все попытки входа в промежутке между 15.05.2012 и 17.05.2012
 .NOTES
 	.
 #>
@@ -540,13 +638,13 @@ function Get-EventLogInfo{
 		$userName,
 		[Alias("after")]
 		[datetime]
-		$startDate = $null,
+		$startDate,
 		[Alias("before")]
 		[datetime]
-		$endDate = $null,
+		$endDate,
 		[Parameter(HelpMessage="Event Id (см. http://www.windowsecurity.com/articles/event-ids-windows-server-2008-vista-revealed.html)")]
 		[Alias("id")]
-		[integer]
+		[Int]
 		$eventId = 0,
 		[Parameter(HelpMessage="Имя рабочей станции из описания события")]
 		[Alias("ws")]
@@ -561,15 +659,16 @@ function Get-EventLogInfo{
         $str = "$str -UserName $userName"
     }
     if ($startDate -ne $null){
-        $str = "$str -after {$startDate}"
+        $str = "$str -after {0}" -f ($startDate.ToShortDateString())
     }
     if ($endDate -ne $null){
-        $str = "$str -before {$endDate}"
+        $str = "$str -before {0}" -f ($endDate.ToShortDateString())
     }
     $events = invoke-expression $str
     if ($eventId -ne 0){
         $events = $events | ? {$_.eventid -eq $eventId }
     }
+
     $Data = New-Object System.Management.Automation.PSObject
     $Data | Add-Member NoteProperty Time ($null)
     $Data | Add-Member NoteProperty UserName ($null)
@@ -596,7 +695,11 @@ function Get-EventLogInfo{
 
 clear
 
-Get-FilteredUsers -l "test"
+#Get-FilteredComputers -sd "4/17/2012 8:52:28 AM" -td "2.05:00"
+
+Get-FilteredUsers -sdfl "4/17/2012 8:52:28 AM" -edfl "5/17/2012 8:52:28 AM" -tdl "2.05:00"
+
+#Get-FilteredUsers -l "test"
 
 #Get-FilteredUsers -cn "test" -properties @("Name")| format-list
 
@@ -610,6 +713,6 @@ Get-FilteredUsers -l "test"
 
 #Get-FilteredUsers -startDateCreated "4/17/2012 8:52:28 AM"
     
-#Get-EventLogInfo -eventid 4624 -workstation  "*WIN*"
+#Get-EventLogInfo -id 4776 
 
 #Get-FilteredUsers -cn "terent" | format-list
