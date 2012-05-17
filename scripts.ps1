@@ -291,13 +291,13 @@ function Get-FilteredUsers {
     if ($startDateFailedLogon -ne $null) { 
         $filter = "$filter(badPasswordTime>={0})" -f ($startDateFailedLogon.ToFileTime())
         $attributes = $attributes + 'badPasswordTime'
-		$ftParams = $ftParams + 'badPasswordTime'
+		$ftParams = $ftParams + 'failedLogon'
     }
     if ($endDateFailedLogon -ne $null) { 
         $filter = "$filter(badPasswordTime<={0})" -f ($endDateFailedLogon.ToFileTime())
         $attributes = $attributes + 'badPasswordTime'
 		if ($startDateFailedLogon -eq $null){
-			$ftParams = $ftParams + 'badPasswordTime'
+			$ftParams = $ftParams + 'failedLogon'
 		}
     }
     if ($timedeltaCreated -ne $null){
@@ -322,13 +322,13 @@ function Get-FilteredUsers {
     if ($startDateLogon -ne $null) { 
         $filter = "$filter(lastLogonTimestamp>={0})" -f $($startDateLogon.ToFileTime())
         $attributes = $attributes + 'lastLogonTimestamp'
-		$ftParams = $ftParams + 'lastLogonTimestamp'
+		$ftParams = $ftParams + 'logon'
     }
     if ($endDateLogon -ne $null) { 
         $filter = "$filter(lastLogonTimestamp<={0})" -f $($endDateLogon.ToFileTime())
         $attributes = $attributes + 'lastLogonTimestamp'
 		if ($startDateLogon -eq $null){
-			$ftParams = $ftParams + 'lastLogonTimestamp'
+			$ftParams = $ftParams + 'logon'
 		}
     }
     
@@ -383,16 +383,16 @@ function Get-FilteredUsers {
     Get-ADUser -LDAPFilter $filter -SearchBase $root -Properties $attributes | ? {
         ($owner -eq "") -or ($_.nTSecurityDescriptor.Owner -eq $owner) 
     } | % {
-    	#if (($startDateFailedLogon -ne $null) -or ($endDateFailedLogon -ne $null)) {
-        #        $a = [datetime]::FromFileTime($_.('badPasswordTime'))
-        #        $_.('failedLogon') = $a
-        #    }
-    	#if (($startDateLogon -ne $null) -or ($endDateLogon -ne $null)) {
-        #        $a = [datetime]::FromFileTime($_.('lastLogonTimestamp'))
-        #        $_.('logon') = $a
-        #    }
+    	if (($startDateFailedLogon -ne $null) -or ($endDateFailedLogon -ne $null)) {
+                $a = [datetime]::FromFileTime($_.('badPasswordTime'))
+                $_.('failedLogon') = $a.ToString()
+            }
+    	if (($startDateLogon -ne $null) -or ($endDateLogon -ne $null)) {
+                $a = [datetime]::FromFileTime($_.('lastLogonTimestamp'))
+                $_.('logon') = $a.ToString()
+            }
     	if ($locked -ne $null) {
-                $_.('locked') = $locked
+                $_.('locked') = $locked.ToString()
             }
         $_.('owner') = $_.nTSecurityDescriptor.Owner
         $_
@@ -707,7 +707,7 @@ clear
 
 #Get-FilteredComputers -sd "4/17/2012 8:52:28 AM" -td "2.05:00"
 
-#Get-FilteredUsers -sdfl "4/17/2012 8:52:28 AM" -edfl "5/17/2012 8:52:28 AM" -tdl "2.05:00"
+Get-FilteredUsers -sdfl "4/17/2012 8:52:28 AM" -edfl "5/17/2012 8:52:28 AM" -tdl "2.05:00"
 
 #Get-FilteredUsers -l "test"
 
@@ -723,6 +723,6 @@ clear
 
 #Get-FilteredUsers -startDateCreated "4/17/2012 8:52:28 AM"
     
-Get-EventLogInfo -id 4776 -td "1"
+#Get-EventLogInfo -id 4776 -td "1"
 
 #Get-FilteredUsers -cn "terent" | format-list
