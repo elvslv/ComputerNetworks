@@ -623,6 +623,9 @@ function Change-Users {
 .EXAMPLE
     Get-EventLogInfo -id 4776 -after "5/15/2012" -before "5/17/2012"
     Возвращает все попытки входа в промежутке между 15.05.2012 и 17.05.2012
+.EXAMPLE
+    Get-EventLogInfo -id 4776 -td "1"
+    Возвращает события с id 4776 за прошедшие сутки
 .NOTES
 	.
 #>
@@ -642,6 +645,10 @@ function Get-EventLogInfo{
 		[Alias("before")]
 		[datetime]
 		$endDate,
+        [Parameter(HelpMessage="Разница между начальной (конечной) датой, если одна из них задана, или между текущей датой и начальной, если начальная и конечная даты не заданы, игнорируется, если одновременно заданы startDate и endDate")]
+        [Alias("td")]
+        [timespan]   
+        $timedelta,
 		[Parameter(HelpMessage="Event Id (см. http://www.windowsecurity.com/articles/event-ids-windows-server-2008-vista-revealed.html)")]
 		[Alias("id")]
 		[Int]
@@ -657,6 +664,9 @@ function Get-EventLogInfo{
     }
     if ($userName -ne ""){
         $str = "$str -UserName $userName"
+    }
+    if ($timedelta -ne $null){
+        $startDate, $endDate = Change-Dates $timedelta $startDate $endDate
     }
     if ($startDate -ne $null){
         $str = "$str -after {0}" -f ($startDate.ToShortDateString())
@@ -697,7 +707,7 @@ clear
 
 #Get-FilteredComputers -sd "4/17/2012 8:52:28 AM" -td "2.05:00"
 
-Get-FilteredUsers -sdfl "4/17/2012 8:52:28 AM" -edfl "5/17/2012 8:52:28 AM" -tdl "2.05:00"
+#Get-FilteredUsers -sdfl "4/17/2012 8:52:28 AM" -edfl "5/17/2012 8:52:28 AM" -tdl "2.05:00"
 
 #Get-FilteredUsers -l "test"
 
@@ -713,6 +723,6 @@ Get-FilteredUsers -sdfl "4/17/2012 8:52:28 AM" -edfl "5/17/2012 8:52:28 AM" -tdl
 
 #Get-FilteredUsers -startDateCreated "4/17/2012 8:52:28 AM"
     
-#Get-EventLogInfo -id 4776 
+Get-EventLogInfo -id 4776 -td "1"
 
 #Get-FilteredUsers -cn "terent" | format-list
